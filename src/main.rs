@@ -1,7 +1,9 @@
+mod metrics;
 mod state;
 mod superglide;
 
 use crate::{
+    metrics::Metrics,
     state::State,
     superglide::{Action, Input, Percentage, TargetFrameRate},
 };
@@ -66,6 +68,7 @@ fn main() -> Result<()> {
     let timeout = Duration::from_millis(args.timeout.into());
     let mut state = State::Idle;
     let mut input_events = termion::async_stdin().events();
+    let mut metrics = Metrics::new();
 
     loop {
         match state {
@@ -90,6 +93,20 @@ fn main() -> Result<()> {
                 // If between 0 and 2, some chance
                 // 1 - min(abs(elapsed - 1.0))
                 let superglide_chance = Percentage(1.0 - (elapsed_frames - 1.0).abs().min(1.0));
+                match superglide_chance.0 {
+                    chance if chance == 0.0 => {
+                        if let Action::Crouch(..) = first_input.action {
+                            metrics.record_crouch_first();
+                        } else if elapsed_frames > 2.0 {
+                            metrics.record_crouch_late();
+                        } else {
+                            eprint!("you did some weird shit idklol\r\n");
+                        }
+                    }
+                    _ => {
+                        metrics.record_possible_superglide(&superglide_chance);
+                    }
+                }
                 print!("superglide chance: {}\r\n", superglide_chance);
 
                 state = State::Idle;
@@ -99,7 +116,10 @@ fn main() -> Result<()> {
 
         for event in &mut input_events {
             let action = match event? {
-                event if event == EXIT_KEY => return Ok(()),
+                event if event == EXIT_KEY => {
+                    print!("session stats: {:?}\r\n", metrics);
+                    return Ok(());
+                }
                 event if event == jump => Action::Jump(event),
                 event if event == crouch => Action::Crouch(event),
                 event => Action::Unknown(event),
